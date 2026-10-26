@@ -70,6 +70,21 @@ python -m piper.download_voices en_US-ryan-high
 python voiceover.py script.md --engine piper --voice en_US-ryan-high.onnx
 ```
 
+**`--engine elevenlabs`** uses the voices in your own [ElevenLabs](https://elevenlabs.io) account,
+such as Roger (the default). Put your API key in the `ELEVENLABS_API_KEY` environment variable rather
+than on the command line, then pick a voice by name or voice ID:
+
+```sh
+export ELEVENLABS_API_KEY=...            # from elevenlabs.io → Developers → API keys
+python voiceover.py script.md --engine elevenlabs --voice Roger
+python voiceover.py script.md --engine elevenlabs --voice Roger --model eleven_v3 --rate=-5%
+```
+
+Requests use ElevenLabs' default stability (0.5) and similarity (0.75). `--rate` sets the speed, from
+-30% to +20%. Choose `--model` to match the model you use in the ElevenLabs app. Each run is billed
+in characters, roughly 5,500 to 6,000 for every 1,000 words of script. Sentences you haven't changed come from
+the cache and cost nothing to re-render.
+
 Before relying on a voice in a monetised video, check its license and the platform's terms.
 
 ### All options

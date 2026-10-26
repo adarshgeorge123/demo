@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -24,6 +25,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -126,14 +129,14 @@ class EdgeEngine:
     name = "edge"
     default_voice = "en-US-AndrewNeural"
 
-    def __init__(self, voice, rate, pitch):
+    def __init__(self, args):
         try:
             import edge_tts
         except ImportError:
             sys.exit("edge-tts is not installed: pip install -r requirements.txt")
         self.edge_tts = edge_tts
-        self.voice, self.rate, self.pitch = voice or self.default_voice, rate, pitch
-        self.settings = f"{self.voice}|{rate}|{pitch}"
+        self.voice, self.rate, self.pitch = args.voice or self.default_voice, args.rate, args.pitch
+        self.settings = f"{self.voice}|{self.rate}|{self.pitch}"
 
     def synth(self, text, path):
         for attempt in range(4):
@@ -153,18 +156,18 @@ class PiperEngine:
 
     name = "piper"
 
-    def __init__(self, voice, rate, pitch):
-        if not voice or not Path(voice).is_file():
+    def __init__(self, args):
+        if not args.voice or not Path(args.voice).is_file():
             sys.exit("--engine piper needs --voice pointing to a Piper .onnx model (see README)")
         try:
             from piper import PiperVoice, SynthesisConfig
         except ImportError:
             sys.exit("piper-tts is not installed: pip install -r requirements.txt")
-        if pitch != "+0Hz":
+        if args.pitch != "+0Hz":
             print("note: --pitch is ignored by the piper engine", file=sys.stderr)
-        self.voice = PiperVoice.load(voice)
-        self.config = SynthesisConfig(length_scale=1 / (1 + percent(rate) / 100))
-        self.settings = f"{Path(voice).resolve()}|{rate}"
+        self.voice = PiperVoice.load(args.voice)
+        self.config = SynthesisConfig(length_scale=1 / (1 + percent(args.rate) / 100))
+        self.settings = f"{Path(args.voice).resolve()}|{args.rate}"
         self.lock = threading.Lock()  # piper's espeak phonemizer is not thread-safe
 
     def synth(self, text, path):
@@ -172,7 +175,61 @@ class PiperEngine:
             self.voice.synthesize_wav(text, wav, syn_config=self.config)
 
 
-ENGINES = {engine.name: engine for engine in (EdgeEngine, PiperEngine)}
+class ElevenLabsEngine:
+    """ElevenLabs voices through your own account; reads ELEVENLABS_API_KEY."""
+
+    name = "elevenlabs"
+    default_voice = "Roger"
+    api = "https://api.elevenlabs.io/v1"
+
+    def __init__(self, args):
+        self.key = os.environ.get("ELEVENLABS_API_KEY")
+        if not self.key:
+            sys.exit("--engine elevenlabs needs your API key in the ELEVENLABS_API_KEY environment variable")
+        if args.pitch != "+0Hz":
+            print("note: --pitch is ignored by the elevenlabs engine", file=sys.stderr)
+        self.voice_id = self.find_voice(args.voice or self.default_voice)
+        # Stability and similarity are ElevenLabs' defaults; --rate maps to speed (0.7 to 1.2).
+        settings = {"stability": 0.5, "similarity_boost": 0.75, "speed": 1 + percent(args.rate) / 100}
+        self.body = {"model_id": args.model, "voice_settings": settings}
+        self.settings = f"{self.voice_id}|{args.model}|{args.rate}"
+
+    def request(self, path, body=None):
+        data = json.dumps(body).encode() if body else None
+        headers = {"xi-api-key": self.key, "Content-Type": "application/json"}
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(urllib.request.Request(self.api + path, data, headers), timeout=120) as response:
+                    return response.read()
+            except urllib.error.HTTPError as error:
+                # 429 means too many requests at once for your plan; wait and retry.
+                if (error.code != 429 and error.code < 500) or attempt == 4:
+                    detail = error.read().decode(errors="replace")[:300]
+                    raise RuntimeError(f"ElevenLabs API error {error.code}: {detail}") from error
+            except urllib.error.URLError as error:
+                if attempt == 4:
+                    raise RuntimeError(f"cannot reach ElevenLabs ({error.reason})") from error
+            time.sleep(2 ** attempt)
+
+    def find_voice(self, voice):
+        """Accept a voice ID, or a name from your ElevenLabs voices such as "Roger"."""
+        if re.fullmatch(r"[A-Za-z0-9]{20}", voice):
+            return voice
+        voices = json.loads(self.request("/voices"))["voices"]
+        for candidate in voices:
+            # Names can carry a description, e.g. "Roger - Laid-Back, Casual, Resonant".
+            if voice.lower() in (candidate["name"].lower(), candidate["name"].split(" - ")[0].lower()):
+                return candidate["voice_id"]
+        names = ", ".join(sorted(v["name"].split(" - ")[0] for v in voices))
+        raise RuntimeError(f"no ElevenLabs voice named {voice!r} in your account. "
+                           f"Pass its voice ID instead, or one of: {names}")
+
+    def synth(self, text, path):
+        audio = self.request(f"/text-to-speech/{self.voice_id}?output_format=mp3_44100_128", {**self.body, "text": text})
+        Path(path).write_bytes(audio)
+
+
+ENGINES = {engine.name: engine for engine in (EdgeEngine, PiperEngine, ElevenLabsEngine)}
 
 
 def percent(rate):
@@ -378,10 +435,13 @@ def parse_args():
     parser.add_argument("script", nargs="?", type=Path, help="script file (.txt or .md)")
     parser.add_argument("-o", "--output", type=Path, help="output audio (.mp3, .wav or .m4a); default: <script>.mp3")
     parser.add_argument("--engine", choices=ENGINES, default="edge", help="TTS engine (default: edge)")
-    parser.add_argument("--voice", help=f"edge voice name (default: {EdgeEngine.default_voice}) or piper .onnx model path")
+    parser.add_argument("--voice", help=f"edge voice name (default: {EdgeEngine.default_voice}), piper .onnx model "
+                                        f"path, or elevenlabs voice name or ID (default: {ElevenLabsEngine.default_voice})")
     # Negative values must be written --rate=-5% so argparse doesn't read them as a flag.
     parser.add_argument("--rate", default="+0%", help="speaking rate, e.g. --rate=+10%% or --rate=-5%%")
     parser.add_argument("--pitch", default="+0Hz", help="edge only: pitch shift, e.g. --pitch=-2Hz")
+    parser.add_argument("--model", default="eleven_multilingual_v2",
+                        help="elevenlabs only: model ID (default: eleven_multilingual_v2)")
     parser.add_argument("--sentence-gap", type=float, default=0.25, help="seconds between sentences (default: 0.25)")
     parser.add_argument("--paragraph-gap", type=float, default=0.7, help="seconds between paragraphs (default: 0.7)")
     parser.add_argument("--music", type=Path, help="background music, looped and ducked under the voice")
@@ -412,8 +472,8 @@ def main():
     if not sentences:
         sys.exit("the script has nothing to say")
 
-    engine = ENGINES[args.engine](args.voice, args.rate, args.pitch)
     try:
+        engine = ENGINES[args.engine](args)
         clips = render_clips(engine, sentences, out.parent / ".voiceover_cache", args.jobs)
     except RuntimeError as error:
         sys.exit(f"\nerror: {error}")
