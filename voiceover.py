@@ -42,7 +42,8 @@ TRIM_FILTER = (
 
 PAUSE_RE = re.compile(r"\[pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\]", re.IGNORECASE)
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*$")
-SENTENCE_END_RE = re.compile(r"[.!?…]+[\"'”’)\]]*(?=\s|$)")
+# Sentence-ending punctuation, unless the next word is lowercase (a quoted question mid-sentence).
+SENTENCE_END_RE = re.compile(r"[.!?…]+[\"'”’)\]]*(?=\s+[^\sa-z]|\s*$)")
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e", "approx", "no", "fig"}
 
 
@@ -315,14 +316,15 @@ def master(voice_wav, out, duration, music, music_volume, normalize):
         ffmpeg("-i", str(voice_wav), "-stream_loop", "-1", "-i", str(music),
                "-filter_complex", graph, "-c:a", "pcm_f32le", str(mix))
     else:
-        ffmpeg("-i", str(voice_wav), "-af", VOICE_CHAIN, "-c:a", "pcm_f32le", str(mix))
+        ffmpeg("-i", str(voice_wav), "-af", VOICE_CHAIN, "-ar", "48000", "-c:a", "pcm_f32le", str(mix))
 
     # Apply the exact gain to reach the target and let a limiter catch the few peaks
     # that would otherwise stop it (loudnorm alone falls short on spiky speech).
+    # The mix is already 48 kHz: resampling after the limiter would bring the peaks back.
     gain = TARGET_LUFS - measure_loudness(mix) if normalize else 0
     limiter = f"volume={gain:.2f}dB,alimiter=limit=-2dB:level=0:latency=1"
     codec = ["-c:a", "libmp3lame", "-b:a", "192k"] if out.suffix.lower() == ".mp3" else []
-    ffmpeg("-i", str(mix), "-af", limiter, "-ar", "48000", *codec, str(out))
+    ffmpeg("-i", str(mix), "-af", limiter, *codec, str(out))
 
 
 def measure_loudness(path):
@@ -377,8 +379,9 @@ def parse_args():
     parser.add_argument("-o", "--output", type=Path, help="output audio (.mp3, .wav or .m4a); default: <script>.mp3")
     parser.add_argument("--engine", choices=ENGINES, default="edge", help="TTS engine (default: edge)")
     parser.add_argument("--voice", help=f"edge voice name (default: {EdgeEngine.default_voice}) or piper .onnx model path")
-    parser.add_argument("--rate", default="+0%", help="speaking rate, e.g. +10%% or -5%% (default: +0%%)")
-    parser.add_argument("--pitch", default="+0Hz", help="edge only: pitch shift, e.g. -2Hz (default: +0Hz)")
+    # Negative values must be written --rate=-5% so argparse doesn't read them as a flag.
+    parser.add_argument("--rate", default="+0%", help="speaking rate, e.g. --rate=+10%% or --rate=-5%%")
+    parser.add_argument("--pitch", default="+0Hz", help="edge only: pitch shift, e.g. --pitch=-2Hz")
     parser.add_argument("--sentence-gap", type=float, default=0.25, help="seconds between sentences (default: 0.25)")
     parser.add_argument("--paragraph-gap", type=float, default=0.7, help="seconds between paragraphs (default: 0.7)")
     parser.add_argument("--music", type=Path, help="background music, looped and ducked under the voice")

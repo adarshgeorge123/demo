@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 ```sh
 python voiceover.py examples/coffee.md                   # -> examples/coffee.mp3 / .srt / .chapters.txt
-python voiceover.py script.md -o out/episode12.mp3 --voice en-GB-RyanNeural --rate +5%
+python voiceover.py script.md -o out/episode12.mp3 --voice en-GB-RyanNeural --rate=-5%
 python voiceover.py script.md --music lofi.mp3 --music-volume 0.1
 python voiceover.py --list-voices en                     # browse voices
 ```
@@ -59,7 +59,8 @@ Write numbers and acronyms the way you want them read out ("ninety degrees", "A 
 [edge-tts](https://github.com/rany2/edge-tts). It needs an internet connection and has hundreds
 of voices across many languages and accents. Popular narration voices include
 `en-US-AndrewNeural` (default), `en-US-BrianNeural`, `en-US-AvaNeural`, `en-GB-RyanNeural` and
-`en-GB-SoniaNeural`. Adjust the delivery with `--rate +8%` or `--pitch -2Hz`.
+`en-GB-SoniaNeural`. Adjust the delivery with `--rate=+8%` or `--pitch=-2Hz` (keep the `=`, or a
+negative value is mistaken for an option).
 
 **`--engine piper`** runs fully offline with [Piper](https://github.com/OHF-Voice/piper1-gpl). Download
 a voice once, then point `--voice` at its `.onnx` file:
