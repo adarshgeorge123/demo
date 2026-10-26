@@ -1,0 +1,7 @@
+.voiceover_cache/
+__pycache__/
+*.onnx
+*.onnx.json
+examples/*.mp3
+examples/*.srt
+examples/*.chapters.txt

@@ -1,0 +1,2 @@
+edge-tts>=7.0
+piper-tts>=1.3
