@@ -1,3 +1,13 @@
-git add .claude/settings.json
-git commit -m "Offer the lemo-opuscar plugin in Claude Code"
-git push
+{
+  "extraKnownMarketplaces": {
+    "lemolab": {
+      "source": {
+        "source": "github",
+        "repo": "lemomo-ai/lemo-opuscar"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "lemo-opuscar@lemolab": true
+  }
+}
