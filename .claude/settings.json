@@ -1,0 +1,3 @@
+git add .claude/settings.json
+git commit -m "Offer the lemo-opuscar plugin in Claude Code"
+git push
